@@ -398,6 +398,9 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, GoogleMap.OnInfoWi
                 }
             }
         } else {
+            // Prompt the user for permission.
+            getLocationPermission()
+
             // The user has not granted permission.
             Log.i(TAG, "The user did not grant location permission.")
 
@@ -409,8 +412,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback, GoogleMap.OnInfoWi
                     .snippet(getString(R.string.default_info_snippet))
             )
 
-            // Prompt the user for permission.
-            getLocationPermission()
+
         }
     }
     // [END maps_current_place_show_current_place]
