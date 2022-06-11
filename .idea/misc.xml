@@ -3,9 +3,13 @@
   <component name="DesignSurface">
     <option name="filePathToZoomLevelMap">
       <map>
+        <entry key="..\:/Users/Sumpark/AndroidStudioProjects/MyApplication2/app/src/main/res/drawable/ic_baseline_directions_bike_24.xml" value="0.276" />
+        <entry key="..\:/Users/Sumpark/AndroidStudioProjects/MyApplication2/app/src/main/res/drawable/ic_baseline_favorite_24.xml" value="0.303" />
+        <entry key="..\:/Users/Sumpark/AndroidStudioProjects/MyApplication2/app/src/main/res/drawable/ic_baseline_favorite_border_24.xml" value="0.329" />
+        <entry key="..\:/Users/Sumpark/AndroidStudioProjects/MyApplication2/app/src/main/res/drawable/ic_baseline_refresh_24.xml" value="0.329" />
         <entry key="..\:/Users/Sumpark/AndroidStudioProjects/MyApplication2/app/src/main/res/layout/activity_maps.xml" value="0.31145833333333334" />
         <entry key="..\:/Users/Sumpark/AndroidStudioProjects/MyApplication2/app/src/main/res/layout/current_place_menu.xml" value="0.178125" />
-        <entry key="..\:/Users/Sumpark/AndroidStudioProjects/MyApplication2/app/src/main/res/layout/custom_info_contents.xml" value="0.178125" />
+        <entry key="..\:/Users/Sumpark/AndroidStudioProjects/MyApplication2/app/src/main/res/layout/custom_info_contents.xml" value="0.33" />
         <entry key="..\:/Users/Sumpark/AndroidStudioProjects/MyApplication2/app/src/main/res/menu/current_place_menu.xml" value="0.1" />
       </map>
     </option>

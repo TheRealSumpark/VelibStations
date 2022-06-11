@@ -13,24 +13,32 @@
 // limitations under the License.
 
 package com.example.myapplication
+
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
+
 import android.content.DialogInterface
 import android.content.pm.PackageManager
 import android.location.Location
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkInfo
+
 import android.os.Bundle
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.myapplication.api.APIVelibStations
-
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.CameraUpdateFactory
@@ -38,26 +46,27 @@ import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.GoogleMap.InfoWindowAdapter
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.Marker
-import com.google.android.gms.maps.model.MarkerOptions
+import com.google.android.gms.maps.model.*
 import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.FindCurrentPlaceRequest
 import com.google.android.libraries.places.api.net.PlacesClient
+import com.google.maps.android.clustering.ClusterManager
+import dagger.MapKey
+import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
-import kotlinx.coroutines.runBlocking
+
 /**
  * An activity that displays a map showing the place at the device's current location.
  */
-class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
+class MapsActivity : AppCompatActivity(), OnMapReadyCallback, GoogleMap.OnInfoWindowClickListener {
 
-    val stationsList : MutableList<Station> = mutableListOf()
 
+    private val stationsList: MutableList<Station> = mutableListOf()
+    private val favouriteStations = mutableListOf<Station>()
     private var map: GoogleMap? = null
     private var cameraPosition: CameraPosition? = null
 
@@ -67,7 +76,7 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     // The entry point to the Fused Location Provider.
     private lateinit var fusedLocationProviderClient: FusedLocationProviderClient
 
-    // A default location (Sydney, Australia) and default zoom to use when location permission is
+    // A default location (Paris, France) and default zoom to use when location permission is
     // not granted.
     private val defaultLocation = LatLng(-33.8523341, 151.2106085)
     private var locationPermissionGranted = false
@@ -80,9 +89,13 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     private var likelyPlaceAttributions: Array<List<*>?> = arrayOfNulls(0)
     private var likelyPlaceLatLngs: Array<LatLng?> = arrayOfNulls(0)
 
+
+    private val markerToFavouriteStationsMap = mutableMapOf<String, Station>()
+
     // [START maps_current_place_on_create]
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
 
         // [START_EXCLUDE silent]
         // Retrieve location and camera position from saved instance state.
@@ -105,13 +118,25 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
         // Construct a FusedLocationProviderClient.
         fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this)
 
+
+
+
+
+
         // Build the map.
         // [START maps_current_place_map_fragment]
         val mapFragment = supportFragmentManager
             .findFragmentById(R.id.map) as SupportMapFragment?
         mapFragment?.getMapAsync(this)
+
         // [END maps_current_place_map_fragment]
         // [END_EXCLUDE]
+
+
+        val stationsDAO = AppDatabase.getDatabase(applicationContext).stationDAO()
+
+        favouriteStations.addAll(stationsDAO.getAll())
+
     }
     // [END maps_current_place_on_create]
 
@@ -145,11 +170,28 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
      */
     // [START maps_current_place_on_options_item_selected]
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        if (item.itemId == R.id.RefreshVelib) {
-          //  showCurrentPlace()
-            synchroAPI()
-            placeMarkers()
+        when (item.itemId) {
+            R.id.RefreshVelib -> {
+
+                if (isConnected()) {
+                    showCurrentPlace()
+                    synchroAPI()
+                    map?.let { placeMarkers(googleMap = it) }
+
+                } else {
+                    val toast = Toast.makeText(
+                        this,
+                        "Device needs to be have internet access",
+                        Toast.LENGTH_SHORT
+                    )
+                    toast.show()
+                }
+
+
+            }
         }
+
+
         return true
     }
     // [END maps_current_place_on_options_item_selected]
@@ -174,15 +216,20 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
 
             override fun getInfoContents(marker: Marker): View {
                 // Inflate the layouts for the info window, title and snippet.
-                val infoWindow = layoutInflater.inflate(R.layout.custom_info_contents,
-                    findViewById<FrameLayout>(R.id.map), false)
+                val infoWindow = layoutInflater.inflate(
+                    R.layout.custom_info_contents,
+                    findViewById<FrameLayout>(R.id.map), false
+                )
                 val title = infoWindow.findViewById<TextView>(R.id.title)
                 title.text = marker.title
                 val snippet = infoWindow.findViewById<TextView>(R.id.snippet)
                 snippet.text = marker.snippet
+
                 return infoWindow
             }
         })
+
+        map.setOnInfoWindowClickListener(this)
         // [END map_current_place_set_info_window_adapter]
 
         // Prompt the user for permission.
@@ -194,6 +241,8 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
 
         // Get the current location of the device and set the position of the map.
         getDeviceLocation()
+        placeFavouriteMarkers()
+
     }
     // [END maps_current_place_on_map_ready]
 
@@ -215,15 +264,22 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
                         // Set the map's camera position to the current location of the device.
                         lastKnownLocation = task.result
                         if (lastKnownLocation != null) {
-                            map?.moveCamera(CameraUpdateFactory.newLatLngZoom(
-                                LatLng(lastKnownLocation!!.latitude,
-                                    lastKnownLocation!!.longitude), DEFAULT_ZOOM.toFloat()))
+                            map?.moveCamera(
+                                CameraUpdateFactory.newLatLngZoom(
+                                    LatLng(
+                                        lastKnownLocation!!.latitude,
+                                        lastKnownLocation!!.longitude
+                                    ), DEFAULT_ZOOM.toFloat()
+                                )
+                            )
                         }
                     } else {
                         Log.d(TAG, "Current location is null. Using defaults.")
                         Log.e(TAG, "Exception: %s", task.exception)
-                        map?.moveCamera(CameraUpdateFactory
-                            .newLatLngZoom(defaultLocation, DEFAULT_ZOOM.toFloat()))
+                        map?.moveCamera(
+                            CameraUpdateFactory
+                                .newLatLngZoom(defaultLocation, DEFAULT_ZOOM.toFloat())
+                        )
                         map?.uiSettings?.isMyLocationButtonEnabled = false
                     }
                 }
@@ -244,12 +300,16 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
          * device. The result of the permission request is handled by a callback,
          * onRequestPermissionsResult.
          */
-        if (ContextCompat.checkSelfPermission(this.applicationContext,
-                Manifest.permission.ACCESS_FINE_LOCATION)
-            == PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(
+                this.applicationContext,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            )
+            == PackageManager.PERMISSION_GRANTED
+        ) {
             locationPermissionGranted = true
         } else {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
+            ActivityCompat.requestPermissions(
+                this, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
                 PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION
             )
         }
@@ -260,16 +320,19 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
      * Handles the result of the request for location permissions.
      */
     // [START maps_current_place_on_request_permissions_result]
-    override fun onRequestPermissionsResult(requestCode: Int,
-                                            permissions: Array<String>,
-                                            grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray
+    ) {
         locationPermissionGranted = false
         when (requestCode) {
             PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION -> {
 
                 // If request is cancelled, the result arrays are empty.
                 if (grantResults.isNotEmpty() &&
-                    grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    grantResults[0] == PackageManager.PERMISSION_GRANTED
+                ) {
                     locationPermissionGranted = true
                 }
             }
@@ -304,11 +367,12 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
                     val likelyPlaces = task.result
 
                     // Set the count, handling cases where less than 5 entries are returned.
-                    val count = if (likelyPlaces != null && likelyPlaces.placeLikelihoods.size < M_MAX_ENTRIES) {
-                        likelyPlaces.placeLikelihoods.size
-                    } else {
-                        M_MAX_ENTRIES
-                    }
+                    val count =
+                        if (likelyPlaces != null && likelyPlaces.placeLikelihoods.size < M_MAX_ENTRIES) {
+                            likelyPlaces.placeLikelihoods.size
+                        } else {
+                            M_MAX_ENTRIES
+                        }
                     var i = 0
                     likelyPlaceNames = arrayOfNulls(count)
                     likelyPlaceAddresses = arrayOfNulls(count)
@@ -338,10 +402,12 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
             Log.i(TAG, "The user did not grant location permission.")
 
             // Add a default marker, because the user hasn't selected a place.
-            map?.addMarker(MarkerOptions()
-                .title(getString(R.string.default_info_title))
-                .position(defaultLocation)
-                .snippet(getString(R.string.default_info_snippet)))
+            map?.addMarker(
+                MarkerOptions()
+                    .title(getString(R.string.default_info_title))
+                    .position(defaultLocation)
+                    .snippet(getString(R.string.default_info_snippet))
+            )
 
             // Prompt the user for permission.
             getLocationPermission()
@@ -355,31 +421,38 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
     // [START maps_current_place_open_places_dialog]
     private fun openPlacesDialog() {
         // Ask the user to choose the place where they are now.
-        val listener = DialogInterface.OnClickListener { dialog, which -> // The "which" argument contains the position of the selected item.
-            val markerLatLng = likelyPlaceLatLngs[which]
-            var markerSnippet = likelyPlaceAddresses[which]
-            if (likelyPlaceAttributions[which] != null) {
-                markerSnippet = """
+        val listener =
+            DialogInterface.OnClickListener { dialog, which -> // The "which" argument contains the position of the selected item.
+                val markerLatLng = likelyPlaceLatLngs[which]
+                var markerSnippet = likelyPlaceAddresses[which]
+                if (likelyPlaceAttributions[which] != null) {
+                    markerSnippet = """
                     $markerSnippet
                     ${likelyPlaceAttributions[which]}
                     """.trimIndent()
+                }
+
+                if (markerLatLng == null) {
+                    return@OnClickListener
+                }
+
+                // Add a marker for the selected place, with an info window
+                // showing information about that place.
+                map?.addMarker(
+                    MarkerOptions()
+                        .title(likelyPlaceNames[which])
+                        .position(markerLatLng)
+                        .snippet(markerSnippet)
+                )
+
+                // Position the map's camera at the location of the marker.
+                map?.moveCamera(
+                    CameraUpdateFactory.newLatLngZoom(
+                        markerLatLng,
+                        DEFAULT_ZOOM.toFloat()
+                    )
+                )
             }
-
-            if (markerLatLng == null) {
-                return@OnClickListener
-            }
-
-            // Add a marker for the selected place, with an info window
-            // showing information about that place.
-            map?.addMarker(MarkerOptions()
-                .title(likelyPlaceNames[which])
-                .position(markerLatLng)
-                .snippet(markerSnippet))
-
-            // Position the map's camera at the location of the marker.
-            map?.moveCamera(CameraUpdateFactory.newLatLngZoom(markerLatLng,
-                DEFAULT_ZOOM.toFloat()))
-        }
 
         // Display the dialog.
         AlertDialog.Builder(this)
@@ -429,8 +502,10 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
         private const val M_MAX_ENTRIES = 5
     }
 
-    private fun synchroAPI()
-    {
+    private fun synchroAPI() {
+
+        val baseURL = "https://velib-metropole-opendata.smoove.pro/"
+
         val httpLoggingInterceptor = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY
         }
@@ -439,45 +514,229 @@ class MapsActivity : AppCompatActivity(), OnMapReadyCallback {
             .addInterceptor(httpLoggingInterceptor)
             .build()
 
-        val retrofit = Retrofit.Builder().baseUrl("https://velib-metropole-opendata.smoove.pro")
+        val retrofit = Retrofit.Builder().baseUrl(baseURL)
             .addConverterFactory(MoshiConverterFactory.create())
             .client(client)
             .build()
-        val velibStations= retrofit.create(APIVelibStations::class.java)
+        val velibStations = retrofit.create(APIVelibStations::class.java)
 
 
-        runBlocking{
+        runBlocking {
             val result = velibStations.getStations()
-            Log.d(TAG,"API: ${result}")
-            val stations=result.data.stations
+            Log.d(TAG, "API: ${result}\n")
+            val stations = result.data.stations
 
-            stations.map{
-                val ( station_id, name ,  lat, lon,  capacity  ,  stationCode  )=it
-                Station(station_id,name,lat,lon,capacity,stationCode)
-            }.map{
+            val resultDetails = velibStations.getStationsDetails()
+            val details = resultDetails.data.stations
+
+
+            stations.map {
+                val (station_id, name, lat, lon, capacity, stationCode) = it
+                Station(station_id, name, lat, lon, capacity, stationCode)
+
+            }.map {
                 stationsList.add(it)
             }
-
+            details.forEach { details ->
+                val station = stationsList.find { it ->
+                    it.stationCode == details.stationCode && it.station_id == details.station_id
+                }
+                if (station != null) {
+                    station.num_bikes_available = details.num_bikes_available
+                    station.mechanical = details.num_bikes_available_types.get(0).mechanical
+                    station.ebike = details.num_bikes_available_types.get(1).ebike
+                }
+            }
         }
-        stationsList.forEach {Log.d("STATION", it.toString())}
 
+
+        val text = "Syncing done !"
+        val duration = Toast.LENGTH_SHORT
+        val toast = Toast.makeText(applicationContext, text, duration)
+        toast.show()
     }
 
-    private fun placeMarkers()
-    {
+    private fun placeMarkers(googleMap: GoogleMap) {
+
+        // Create the ClusterManager class and set the custom renderer.
+    /*    val clusterManager = ClusterManager<Station>(this, googleMap)
+        clusterManager.renderer =
+            StationRenderer(
+                this,
+                googleMap,
+                clusterManager
+            )
+*/
+
         stationsList.forEach {
+            var colour = BitmapDescriptorFactory.HUE_MAGENTA
 
-            val position = LatLng(it.lat,it.lon)
-            map?.addMarker(MarkerOptions()
-                .position(position)
-                .title(it.name))
+            if (favouriteStations.contains(it))
+                colour = BitmapDescriptorFactory.HUE_YELLOW
 
+            val position = LatLng(it.lat, it.lon)
+
+            val markerId = map?.addMarker(
+                MarkerOptions()
+                    .position(position)
+                    .title(it.name)
+                    .snippet(
+                        "Nombre de véhicules disponibles : ${it.num_bikes_available}\n" +
+                                "Mécanique : ${it.mechanical}\n" +
+                                "eBike : ${it.ebike}"
+                    )
+
+                    .icon(BitmapDescriptorFactory.defaultMarker(colour))
+            )?.id
+            if (markerId != null) {
+                markerToFavouriteStationsMap.put(markerId, it)
+
+            }
         }
+
+     /*   clusterManager.markerCollection.setInfoWindowAdapter(object : InfoWindowAdapter {
+            // Return null here, so that getInfoContents() is called next.
+            override fun getInfoWindow(arg0: Marker): View? {
+                return null
+            }
+
+            override fun getInfoContents(marker: Marker): View {
+                // Inflate the layouts for the info window, title and snippet.
+                val infoWindow = layoutInflater.inflate(
+                    R.layout.custom_info_contents,
+                    findViewById<FrameLayout>(R.id.map), false
+                )
+                val title = infoWindow.findViewById<TextView>(R.id.title)
+                title.text = marker.title
+                val snippet = infoWindow.findViewById<TextView>(R.id.snippet)
+                snippet.text = marker.snippet
+
+                return infoWindow
+            }
+
+        })
+
+        clusterManager.markerCollection.setOnInfoWindowClickListener { it->
+
+            val stationsDAO = AppDatabase.getDatabase(applicationContext).stationDAO()
+
+
+            if (favouriteStations.contains(markerToFavouriteStationsMap.getValue(it.id))) {
+                it.setIcon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_MAGENTA))
+                val station = markerToFavouriteStationsMap.getValue(it.id)
+
+
+                favouriteStations.remove(station)
+                stationsDAO.delete(station)
+
+                val toast = Toast.makeText(
+                    applicationContext,
+                    "${it.title} a été retirée des favoris",
+                    Toast.LENGTH_SHORT
+                )
+                toast.show()
+
+            } else {
+                it.setIcon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_YELLOW))
+
+                val station = markerToFavouriteStationsMap.getValue(it.id)
+                favouriteStations.add(station)
+                stationsDAO.insertAll(station)
+
+                val toast = Toast.makeText(
+                    applicationContext,
+                    "${it.title} a été ajouté aux favoris",
+                    Toast.LENGTH_SHORT
+                )
+                toast.show()
+            }
+        }
+
+
+
+        // Add the places to the ClusterManager.
+        clusterManager.addItems(stationsList)
+        clusterManager.cluster()
+
+        // Set ClusterManager as the OnCameraIdleListener so that it
+        // can re-cluster when zooming in and out.
+        googleMap.setOnCameraIdleListener {
+            clusterManager.onCameraIdle()
+        }*/
+
     }
 
+    private fun placeFavouriteMarkers() {
+        favouriteStations.forEach {
+            val colour = BitmapDescriptorFactory.HUE_YELLOW
+
+            val position = LatLng(it.lat, it.lon)
 
 
+            val markerId = map?.addMarker(
+                MarkerOptions()
+                    .position(position)
+                    .title(it.name)
+                    .snippet(
+                        "Nombre de véhicules disponibles : ${it.num_bikes_available}\n" +
+                                "Mécanique : ${it.mechanical}\n" +
+                                "eBike : ${it.ebike}"
+                    )
 
+                    .icon(BitmapDescriptorFactory.defaultMarker(colour))
+            )?.id
+
+            if (markerId != null) {
+                markerToFavouriteStationsMap.put(markerId, it)
+
+            }
+        }
+
+    }
+
+    override fun onInfoWindowClick(p0: Marker) {
+        val stationsDAO = AppDatabase.getDatabase(applicationContext).stationDAO()
+
+        if (favouriteStations.contains(markerToFavouriteStationsMap.getValue(p0.id))) {
+            p0.setIcon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_MAGENTA))
+            val station = markerToFavouriteStationsMap.getValue(p0.id)
+
+
+            favouriteStations.remove(station)
+            stationsDAO.delete(station)
+
+            val toast = Toast.makeText(
+                applicationContext,
+                "${p0.title} a été retirée des favoris",
+                Toast.LENGTH_SHORT
+            )
+            toast.show()
+
+        } else {
+            p0.setIcon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_YELLOW))
+
+            val station = markerToFavouriteStationsMap.getValue(p0.id)
+            favouriteStations.add(station)
+            stationsDAO.insertAll(station)
+
+            val toast = Toast.makeText(
+                applicationContext,
+                "${p0.title} a été ajouté aux favoris",
+                Toast.LENGTH_SHORT
+            )
+            toast.show()
+        }
+
+
+    }
+
+    fun isConnected(): Boolean {
+        val connectivityManager: ConnectivityManager =
+            this.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val activeNetwork: NetworkInfo? = connectivityManager.activeNetworkInfo
+        val isConnected: Boolean = activeNetwork?.isConnected == true
+        return isConnected
+    }
 
 
 
